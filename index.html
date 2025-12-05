@@ -59,35 +59,68 @@
     </div>
 
     <script>
-        let APP_KEY = null; // Stores the CryptoKey object
+        let APP_KEY = null; 
 
-        // --- UTILS: Buffers to Base64 and back ---
         const buffToB64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
         const b64ToBuff = (b64) => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
 
-        // --- 1. KEY GENERATION & EXPORT ---
+        // --- UPDATED: KEY GENERATION FOR MOBILE ---
         async function generateAndSaveKey() {
-            // Generate a random AES-GCM Key (256 bit is standard)
-            APP_KEY = await window.crypto.subtle.generateKey(
-                { name: "AES-GCM", length: 256 },
-                true, // extractable
-                ["encrypt", "decrypt"]
-            );
+            try {
+                // 1. Generate Key
+                APP_KEY = await window.crypto.subtle.generateKey(
+                    { name: "AES-GCM", length: 256 },
+                    true, 
+                    ["encrypt", "decrypt"]
+                );
 
-            // Export to JSON to save as file
-            const exported = await window.crypto.subtle.exportKey("jwk", APP_KEY);
-            const blob = new Blob([JSON.stringify(exported)], {type: "application/json"});
-            
-            // Trigger Download
-            const a = document.createElement("a");
-            a.href = URL.createObjectURL(blob);
-            a.download = "secret.key.json";
-            a.click();
+                // 2. Export to JSON
+                const exported = await window.crypto.subtle.exportKey("jwk", APP_KEY);
+                const jsonString = JSON.stringify(exported);
+                const blob = new Blob([jsonString], {type: "application/json"});
+                
+                // 3. Mobile-Safe Download Logic
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "secret.key.json";
+                
+                // CRITICAL FIX: Append to the document body for mobile support
+                document.body.appendChild(a);
+                a.click();
+                
+                // Cleanup
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                }, 100);
 
-            updateStatus(true);
+                updateStatus(true);
+
+            } catch (e) {
+                alert("Error generating key: " + e.message);
+            }
         }
 
-        // --- 2. KEY IMPORT ---
+        // --- ADDED: MANUAL KEY COPY (Fallback) ---
+        // If file download fails entirely, use this to copy the key text
+        async function showKeyText() {
+            if(!APP_KEY) return alert("Generate a key first!");
+            const exported = await window.crypto.subtle.exportKey("jwk", APP_KEY);
+            const jsonString = JSON.stringify(exported);
+            
+            // Create a temporary text area to copy from
+            const el = document.createElement('textarea');
+            el.value = jsonString;
+            document.body.appendChild(el);
+            el.select();
+            document.execCommand('copy');
+            document.body.removeChild(el);
+            
+            alert("Key copied to clipboard! You can paste it into a file manually if the download failed.");
+        }
+
+        // --- 2. KEY IMPORT (Unchanged) ---
         async function importKeyFile() {
             const file = document.getElementById('keyFile').files[0];
             if (!file) return;
@@ -96,7 +129,6 @@
             reader.onload = async (e) => {
                 try {
                     const jwk = JSON.parse(e.target.result);
-                    // Import JSON back to CryptoKey
                     APP_KEY = await window.crypto.subtle.importKey(
                         "jwk", jwk,
                         { name: "AES-GCM" },
@@ -106,20 +138,18 @@
                     updateStatus(true);
                 } catch(err) {
                     alert("Invalid Key File!");
-                    console.error(err);
                 }
             };
             reader.readAsText(file);
         }
 
-        // --- 3. ENCRYPT (AES-GCM) ---
+        // --- 3. ENCRYPT (Unchanged) ---
         async function doEncrypt() {
             if (!APP_KEY) return alert("Load a key first!");
             const text = document.getElementById('input').value;
-            const encoded = new TextEncoder().encode(text);
+            if(!text) return;
 
-            // GCM requires a unique IV (Nonce) for every message.
-            // We generate 12 random bytes.
+            const encoded = new TextEncoder().encode(text);
             const iv = window.crypto.getRandomValues(new Uint8Array(12));
 
             const ciphertext = await window.crypto.subtle.encrypt(
@@ -128,8 +158,6 @@
                 encoded
             );
 
-            // Pack IV + Ciphertext together so we can decrypt later
-            // Format: [IV (12 bytes)] + [Ciphertext]
             const combined = new Uint8Array(iv.length + ciphertext.byteLength);
             combined.set(iv);
             combined.set(new Uint8Array(ciphertext), iv.length);
@@ -137,14 +165,14 @@
             document.getElementById('output').value = buffToB64(combined);
         }
 
-        // --- 4. DECRYPT (AES-GCM) ---
+        // --- 4. DECRYPT (Unchanged) ---
         async function doDecrypt() {
             if (!APP_KEY) return alert("Load a key first!");
             try {
                 const rawString = document.getElementById('input').value;
+                if(!rawString) return;
+                
                 const combined = b64ToBuff(rawString);
-
-                // Extract IV (first 12 bytes) and Ciphertext (rest)
                 const iv = combined.slice(0, 12);
                 const data = combined.slice(12);
 
