@@ -3,159 +3,173 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Secret Messenger (AES-128-ECB)</title>
-    <!-- Import CryptoJS from a CDN (Works on GitHub Pages) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <title>Native AES-GCM Messenger</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #222; color: #fff; padding: 20px; max-width: 600px; margin: 0 auto; }
-        .card { background: #333; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
-        h2 { margin-top: 0; color: #00d2ff; }
-        textarea { width: 100%; height: 100px; background: #111; color: #0f0; border: 1px solid #444; padding: 10px; box-sizing: border-box; font-family: monospace; resize: vertical; }
-        button { background: #00d2ff; border: none; padding: 10px 20px; color: #000; font-weight: bold; cursor: pointer; margin-top: 10px; border-radius: 4px; }
-        button.secondary { background: #555; color: #fff; }
+        :root { --main: #00ff9d; --bg: #1a1a1a; --panel: #2d2d2d; }
+        body { font-family: monospace; background: var(--bg); color: #ccc; padding: 20px; max-width: 650px; margin: 0 auto; }
+        .box { background: var(--panel); border: 1px solid #444; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        h2 { margin-top: 0; color: var(--main); border-bottom: 1px solid #444; padding-bottom: 10px; }
+        
+        textarea { width: 100%; height: 80px; background: #000; color: var(--main); border: 1px solid #555; padding: 10px; box-sizing: border-box; resize: vertical; }
+        
+        button { background: var(--main); color: #000; border: none; padding: 12px; font-weight: bold; cursor: pointer; width: 100%; margin-top: 5px; font-family: monospace; font-size: 14px; }
         button:hover { opacity: 0.9; }
+        button.secondary { background: #555; color: #fff; }
+        
+        .status-bar { margin-bottom: 10px; font-size: 12px; }
+        .active { color: var(--main); font-weight: bold; }
+        .inactive { color: #ff5555; }
+        
+        .file-upload { border: 1px dashed #666; padding: 10px; text-align: center; cursor: pointer; margin-bottom: 10px; display: block; }
         input[type="file"] { display: none; }
-        .file-btn { display: inline-block; background: #e67e22; padding: 10px; border-radius: 4px; cursor: pointer; text-align: center; width: 100%; box-sizing: border-box; margin-bottom: 10px;}
-        .status { font-size: 0.8rem; color: #aaa; margin-top: 5px; }
-        .warning { color: #ff5555; font-size: 0.8rem; margin-bottom: 10px; }
     </style>
 </head>
 <body>
 
-    <!-- SECTION 1: KEY MANAGEMENT -->
-    <div class="card">
-        <h2>1. Security Config</h2>
-        <div class="warning">⚠️ Using AES-ECB. For fun/casual use only.</div>
-        
-        <p>Current Key: <span id="keyStatus" style="color: #ff5555;">NONE (Load or Generate)</span></p>
-
-        <!-- Load Config -->
-        <label class="file-btn">
-            📂 Load 'encrypt.config'
-            <input type="file" id="fileInput" accept=".json" onchange="loadConfig()">
-        </label>
-
-        <!-- Generate Config -->
-        <button class="secondary" style="width:100%" onclick="generateConfig()">⚙️ Generate New Config for Friends</button>
-    </div>
-
-    <!-- SECTION 2: ENCRYPT/DECRYPT -->
-    <div class="card">
-        <h2>2. Message Translator</h2>
-        
-        <textarea id="inputText" placeholder="Enter plain text to Encrypt... OR Paste encrypted code to Decrypt..."></textarea>
-        
-        <div style="display: flex; gap: 10px;">
-            <button onclick="process('encrypt')" style="flex:1">🔒 Encrypt</button>
-            <button onclick="process('decrypt')" style="flex:1; background:#e67e22">🔓 Decrypt</button>
+    <!-- KEY MANAGEMENT -->
+    <div class="box">
+        <h2>1. Key Configuration</h2>
+        <div class="status-bar">
+            STATUS: <span id="keyStatus" class="inactive">NO KEY LOADED</span>
         </div>
 
-        <h3>Result:</h3>
-        <textarea id="outputText" readonly placeholder="Result appears here..."></textarea>
-        <button class="secondary" onclick="copyResult()">📋 Copy Result</button>
+        <!-- Import -->
+        <label class="file-upload">
+            Click to Load 'secret.key' file
+            <input type="file" id="keyFile" accept=".json" onchange="importKeyFile()">
+        </label>
+
+        <!-- Generate -->
+        <button class="secondary" onclick="generateAndSaveKey()">Generate New Key (For you & friends)</button>
+    </div>
+
+    <!-- MESSAGING -->
+    <div class="box">
+        <h2>2. Message Enigma</h2>
+        <textarea id="input" placeholder="Type plain text to encrypt... OR paste code to decrypt..."></textarea>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top:10px;">
+            <button onclick="doEncrypt()">ENCRYPT (GCM)</button>
+            <button class="secondary" onclick="doDecrypt()">DECRYPT</button>
+        </div>
+
+        <p>Output:</p>
+        <textarea id="output" readonly style="color: #fff; border-color: #666;"></textarea>
+        <button class="secondary" onclick="copyOutput()">Copy Output</button>
     </div>
 
     <script>
-        // Global variable to hold the secret key
-        let SECRET_KEY = null;
+        let APP_KEY = null; // Stores the CryptoKey object
 
-        // 1. GENERATE CONFIG (Creates a random 16-char string)
-        function generateConfig() {
-            // Generate 16 random bytes -> convert to hex string (32 chars) for key
-            // AES-128 requires a 128-bit key.
-            const randomKey = CryptoJS.lib.WordArray.random(128/8).toString();
+        // --- UTILS: Buffers to Base64 and back ---
+        const buffToB64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+        const b64ToBuff = (b64) => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+
+        // --- 1. KEY GENERATION & EXPORT ---
+        async function generateAndSaveKey() {
+            // Generate a random AES-GCM Key (256 bit is standard)
+            APP_KEY = await window.crypto.subtle.generateKey(
+                { name: "AES-GCM", length: 256 },
+                true, // extractable
+                ["encrypt", "decrypt"]
+            );
+
+            // Export to JSON to save as file
+            const exported = await window.crypto.subtle.exportKey("jwk", APP_KEY);
+            const blob = new Blob([JSON.stringify(exported)], {type: "application/json"});
             
-            const configObj = {
-                algo: "AES-128-ECB",
-                key: randomKey,
-                note: "Share this file securely with friends!"
-            };
+            // Trigger Download
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = "secret.key.json";
+            a.click();
 
-            // Download file logic
-            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(configObj));
-            const downloadAnchorNode = document.createElement('a');
-            downloadAnchorNode.setAttribute("href", dataStr);
-            downloadAnchorNode.setAttribute("download", "encrypt.config.json");
-            document.body.appendChild(downloadAnchorNode);
-            downloadAnchorNode.click();
-            downloadAnchorNode.remove();
-
-            // Auto-load it for the user
-            SECRET_KEY = randomKey;
             updateStatus(true);
         }
 
-        // 2. LOAD CONFIG
-        function loadConfig() {
-            const file = document.getElementById('fileInput').files[0];
+        // --- 2. KEY IMPORT ---
+        async function importKeyFile() {
+            const file = document.getElementById('keyFile').files[0];
             if (!file) return;
 
             const reader = new FileReader();
-            reader.onload = function(e) {
+            reader.onload = async (e) => {
                 try {
-                    const config = JSON.parse(e.target.result);
-                    if(config.key) {
-                        SECRET_KEY = config.key;
-                        updateStatus(true);
-                    } else {
-                        alert("Invalid config file!");
-                    }
-                } catch (err) {
-                    alert("Error reading file.");
+                    const jwk = JSON.parse(e.target.result);
+                    // Import JSON back to CryptoKey
+                    APP_KEY = await window.crypto.subtle.importKey(
+                        "jwk", jwk,
+                        { name: "AES-GCM" },
+                        true,
+                        ["encrypt", "decrypt"]
+                    );
+                    updateStatus(true);
+                } catch(err) {
+                    alert("Invalid Key File!");
+                    console.error(err);
                 }
             };
             reader.readAsText(file);
         }
 
-        // 3. ENCRYPTION / DECRYPTION LOGIC
-        function process(mode) {
-            if (!SECRET_KEY) {
-                alert("Please load or generate an encrypt.config file first!");
-                return;
-            }
+        // --- 3. ENCRYPT (AES-GCM) ---
+        async function doEncrypt() {
+            if (!APP_KEY) return alert("Load a key first!");
+            const text = document.getElementById('input').value;
+            const encoded = new TextEncoder().encode(text);
 
-            const input = document.getElementById('inputText').value;
-            const outputBox = document.getElementById('outputText');
-            
+            // GCM requires a unique IV (Nonce) for every message.
+            // We generate 12 random bytes.
+            const iv = window.crypto.getRandomValues(new Uint8Array(12));
+
+            const ciphertext = await window.crypto.subtle.encrypt(
+                { name: "AES-GCM", iv: iv },
+                APP_KEY,
+                encoded
+            );
+
+            // Pack IV + Ciphertext together so we can decrypt later
+            // Format: [IV (12 bytes)] + [Ciphertext]
+            const combined = new Uint8Array(iv.length + ciphertext.byteLength);
+            combined.set(iv);
+            combined.set(new Uint8Array(ciphertext), iv.length);
+
+            document.getElementById('output').value = buffToB64(combined);
+        }
+
+        // --- 4. DECRYPT (AES-GCM) ---
+        async function doDecrypt() {
+            if (!APP_KEY) return alert("Load a key first!");
             try {
-                // Parse the hex key
-                const keyHex = CryptoJS.enc.Hex.parse(SECRET_KEY);
+                const rawString = document.getElementById('input').value;
+                const combined = b64ToBuff(rawString);
 
-                if (mode === 'encrypt') {
-                    // AES-128-ECB Encryption
-                    const encrypted = CryptoJS.AES.encrypt(input, keyHex, {
-                        mode: CryptoJS.mode.ECB,
-                        padding: CryptoJS.pad.Pkcs7
-                    });
-                    // Output is Base64 by default in CryptoJS
-                    outputBox.value = encrypted.toString();
-                } 
-                else {
-                    // Decryption
-                    const decrypted = CryptoJS.AES.decrypt(input, keyHex, {
-                        mode: CryptoJS.mode.ECB,
-                        padding: CryptoJS.pad.Pkcs7
-                    });
-                    outputBox.value = decrypted.toString(CryptoJS.enc.Utf8);
-                    
-                    // If decryption fails (wrong key/garbage text), result is empty
-                    if(!outputBox.value) outputBox.value = "⚠️ Decryption failed (Wrong Key?)";
-                }
+                // Extract IV (first 12 bytes) and Ciphertext (rest)
+                const iv = combined.slice(0, 12);
+                const data = combined.slice(12);
+
+                const decrypted = await window.crypto.subtle.decrypt(
+                    { name: "AES-GCM", iv: iv },
+                    APP_KEY,
+                    data
+                );
+
+                document.getElementById('output').value = new TextDecoder().decode(decrypted);
             } catch (e) {
-                outputBox.value = "Error: " + e.message;
+                document.getElementById('output').value = "⚠️ DECRYPTION FAILED. Wrong Key or Corrupt Text.";
             }
         }
 
-        function updateStatus(isLoaded) {
+        function updateStatus(active) {
             const el = document.getElementById('keyStatus');
-            if(isLoaded) {
-                el.innerText = "ACTIVE (Ready to chat)";
-                el.style.color = "#0f0";
+            if (active) {
+                el.innerText = "SECURE LINK ESTABLISHED";
+                el.className = "active";
             }
         }
 
-        function copyResult() {
-            const copyText = document.getElementById("outputText");
+        function copyOutput() {
+            const copyText = document.getElementById("output");
             copyText.select();
             document.execCommand("copy");
         }
