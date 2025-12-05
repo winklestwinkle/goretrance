@@ -3,151 +3,194 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Native AES-GCM Messenger</title>
+    <title>Secure GCM Messenger</title>
     <style>
-        :root { --main: #00ff9d; --bg: #1a1a1a; --panel: #2d2d2d; }
-        body { font-family: monospace; background: var(--bg); color: #ccc; padding: 20px; max-width: 650px; margin: 0 auto; }
-        .box { background: var(--panel); border: 1px solid #444; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
-        h2 { margin-top: 0; color: var(--main); border-bottom: 1px solid #444; padding-bottom: 10px; }
+        :root { 
+            --neon: #00ff9d; 
+            --error: #ff5555;
+            --bg: #1a1a1a; 
+            --panel: #2d2d2d; 
+            --disabled: #444;
+        }
+        body { font-family: 'Courier New', Courier, monospace; background: var(--bg); color: #ccc; padding: 20px; max-width: 600px; margin: 0 auto; }
         
-        textarea { width: 100%; height: 80px; background: #000; color: var(--main); border: 1px solid #555; padding: 10px; box-sizing: border-box; resize: vertical; }
+        /* Container Styling */
+        .box { background: var(--panel); border: 1px solid #444; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
         
-        button { background: var(--main); color: #000; border: none; padding: 12px; font-weight: bold; cursor: pointer; width: 100%; margin-top: 5px; font-family: monospace; font-size: 14px; }
-        button:hover { opacity: 0.9; }
-        button.secondary { background: #555; color: #fff; }
+        /* Typography */
+        h2 { margin-top: 0; font-size: 1.2rem; border-bottom: 1px solid #444; padding-bottom: 10px; }
         
-        .status-bar { margin-bottom: 10px; font-size: 12px; }
-        .active { color: var(--main); font-weight: bold; }
-        .inactive { color: #ff5555; }
+        /* Status Bar */
+        .status-container { text-align: center; margin-bottom: 15px; padding: 10px; background: #000; border-radius: 4px; border: 1px solid #333; }
+        .status-text { font-weight: bold; font-size: 0.9rem; }
+        .locked { color: var(--error); }
+        .unlocked { color: var(--neon); }
+
+        /* Inputs */
+        textarea { width: 100%; height: 80px; background: #111; color: #fff; border: 1px solid #555; padding: 10px; box-sizing: border-box; resize: vertical; margin-bottom: 10px; }
+        textarea:focus { outline: none; border-color: var(--neon); }
+
+        /* Buttons */
+        button { border: none; padding: 15px; font-weight: bold; cursor: pointer; width: 100%; margin-top: 5px; font-family: monospace; font-size: 1rem; border-radius: 4px; transition: 0.2s; }
         
-        .file-upload { border: 1px dashed #666; padding: 10px; text-align: center; cursor: pointer; margin-bottom: 10px; display: block; }
+        /* Action Buttons (Encrypt/Decrypt) */
+        .action-btn { background: var(--neon); color: #000; }
+        .action-btn:hover { opacity: 0.9; }
+        
+        /* Disabled State */
+        .action-btn:disabled { background: var(--disabled); color: #888; cursor: not-allowed; opacity: 0.5; }
+
+        /* Secondary Buttons */
+        .secondary { background: #444; color: #fff; font-size: 0.8rem; padding: 10px; }
+        
+        /* File Input Styling */
+        .file-label { display: block; background: #e67e22; color: #000; padding: 12px; text-align: center; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 10px; }
         input[type="file"] { display: none; }
+
     </style>
 </head>
 <body>
 
-    <!-- KEY MANAGEMENT -->
+    <!-- STATUS & KEY LOADER -->
     <div class="box">
-        <h2>1. Key Configuration</h2>
-        <div class="status-bar">
-            STATUS: <span id="keyStatus" class="inactive">NO KEY LOADED</span>
+        <h2>1. Security Access</h2>
+        
+        <div class="status-container">
+            STATUS: <span id="statusText" class="status-text locked">LOCKED (Load Key)</span>
         </div>
 
-        <!-- Import -->
-        <label class="file-upload">
-            Click to Load 'secret.key' file
-            <input type="file" id="keyFile" accept=".json" onchange="importKeyFile()">
+        <!-- Load Key -->
+        <label class="file-label">
+            📂 LOAD KEY FILE
+            <input type="file" id="keyFile" accept=".json">
         </label>
 
-        <!-- Generate -->
-        <button class="secondary" onclick="generateAndSaveKey()">Generate New Key (For you & friends)</button>
+        <!-- Generate Key -->
+        <button class="secondary" onclick="generateKey()">Generate New Key (Download)</button>
     </div>
 
-    <!-- MESSAGING -->
+    <!-- MESSAGING INTERFACE -->
     <div class="box">
         <h2>2. Message Enigma</h2>
-        <textarea id="input" placeholder="Type plain text to encrypt... OR paste code to decrypt..."></textarea>
+        <textarea id="input" placeholder="Enter text here..."></textarea>
         
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top:10px;">
-            <button onclick="doEncrypt()">ENCRYPT (GCM)</button>
-            <button class="secondary" onclick="doDecrypt()">DECRYPT</button>
+        <div style="display: flex; gap: 10px;">
+            <!-- Buttons are DISABLED by default -->
+            <button id="btnEncrypt" class="action-btn" onclick="doEncrypt()" disabled>🔒 ENCRYPT</button>
+            <button id="btnDecrypt" class="action-btn" onclick="doDecrypt()" disabled>🔓 DECRYPT</button>
         </div>
 
-        <p>Output:</p>
-        <textarea id="output" readonly style="color: #fff; border-color: #666;"></textarea>
+        <p style="margin-bottom: 5px; font-size: 0.8rem;">Output:</p>
+        <textarea id="output" readonly style="color: var(--neon);"></textarea>
         <button class="secondary" onclick="copyOutput()">Copy Output</button>
     </div>
 
     <script>
-        let APP_KEY = null; 
+        // --- GLOBAL STATE ---
+        let APP_KEY = null; // This persists until page refresh
 
+        // --- UTILITIES ---
         const buffToB64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
         const b64ToBuff = (b64) => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
 
-        // --- UPDATED: KEY GENERATION FOR MOBILE ---
-        async function generateAndSaveKey() {
-            try {
-                // 1. Generate Key
-                APP_KEY = await window.crypto.subtle.generateKey(
-                    { name: "AES-GCM", length: 256 },
-                    true, 
-                    ["encrypt", "decrypt"]
-                );
-
-                // 2. Export to JSON
-                const exported = await window.crypto.subtle.exportKey("jwk", APP_KEY);
-                const jsonString = JSON.stringify(exported);
-                const blob = new Blob([jsonString], {type: "application/json"});
-                
-                // 3. Mobile-Safe Download Logic
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = "secret.key.json";
-                
-                // CRITICAL FIX: Append to the document body for mobile support
-                document.body.appendChild(a);
-                a.click();
-                
-                // Cleanup
-                setTimeout(() => {
-                    document.body.removeChild(a);
-                    window.URL.revokeObjectURL(url);
-                }, 100);
-
-                updateStatus(true);
-
-            } catch (e) {
-                alert("Error generating key: " + e.message);
-            }
-        }
-
-        // --- ADDED: MANUAL KEY COPY (Fallback) ---
-        // If file download fails entirely, use this to copy the key text
-        async function showKeyText() {
-            if(!APP_KEY) return alert("Generate a key first!");
-            const exported = await window.crypto.subtle.exportKey("jwk", APP_KEY);
-            const jsonString = JSON.stringify(exported);
-            
-            // Create a temporary text area to copy from
-            const el = document.createElement('textarea');
-            el.value = jsonString;
-            document.body.appendChild(el);
-            el.select();
-            document.execCommand('copy');
-            document.body.removeChild(el);
-            
-            alert("Key copied to clipboard! You can paste it into a file manually if the download failed.");
-        }
-
-        // --- 2. KEY IMPORT (Unchanged) ---
-        async function importKeyFile() {
-            const file = document.getElementById('keyFile').files[0];
+        // --- EVENT LISTENER FOR FILE LOADING ---
+        // Using addEventListener is more reliable on mobile than inline onchange
+        document.getElementById('keyFile').addEventListener('change', async function(event) {
+            const file = event.target.files[0];
             if (!file) return;
 
             const reader = new FileReader();
+            
             reader.onload = async (e) => {
                 try {
                     const jwk = JSON.parse(e.target.result);
+                    
+                    // Import JSON back to CryptoKey
                     APP_KEY = await window.crypto.subtle.importKey(
                         "jwk", jwk,
                         { name: "AES-GCM" },
                         true,
                         ["encrypt", "decrypt"]
                     );
-                    updateStatus(true);
+
+                    // UPDATE UI: Unlock the app
+                    unlockUI();
+                    
                 } catch(err) {
-                    alert("Invalid Key File!");
+                    alert("Error: Invalid Key File selected.");
+                    console.error(err);
+                    lockUI(); // Reset if bad file
                 }
             };
+
             reader.readAsText(file);
+
+            // IMPORTANT: Reset input so you can reload the same file if needed (fixes mobile bugs)
+            event.target.value = ''; 
+        });
+
+        // --- UI STATE HELPERS ---
+        function unlockUI() {
+            const status = document.getElementById('statusText');
+            status.innerText = "UNLOCKED (Key Loaded)";
+            status.className = "status-text unlocked";
+
+            // Enable Buttons
+            document.getElementById('btnEncrypt').disabled = false;
+            document.getElementById('btnDecrypt').disabled = false;
         }
 
-        // --- 3. ENCRYPT (Unchanged) ---
+        function lockUI() {
+            APP_KEY = null;
+            const status = document.getElementById('statusText');
+            status.innerText = "LOCKED (Load Key)";
+            status.className = "status-text locked";
+
+            // Disable Buttons
+            document.getElementById('btnEncrypt').disabled = true;
+            document.getElementById('btnDecrypt').disabled = true;
+        }
+
+        // --- KEY GENERATION (Mobile Safe) ---
+        async function generateKey() {
+            try {
+                // 1. Generate
+                APP_KEY = await window.crypto.subtle.generateKey(
+                    { name: "AES-GCM", length: 256 },
+                    true, ["encrypt", "decrypt"]
+                );
+
+                // 2. Export
+                const exported = await window.crypto.subtle.exportKey("jwk", APP_KEY);
+                const blob = new Blob([JSON.stringify(exported)], {type: "application/json"});
+                const url = URL.createObjectURL(blob);
+
+                // 3. Download (Mobile Safe Append)
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "secret.key.json";
+                document.body.appendChild(a);
+                a.click();
+                
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                }, 100);
+
+                // Auto-unlock after generating
+                unlockUI();
+
+            } catch (e) {
+                alert("Generation failed: " + e.message);
+            }
+        }
+
+        // --- ENCRYPTION LOGIC ---
         async function doEncrypt() {
-            if (!APP_KEY) return alert("Load a key first!");
+            if (!APP_KEY) return; // Double check
+
             const text = document.getElementById('input').value;
-            if(!text) return;
+            if(!text) return alert("Please enter text to encrypt.");
 
             const encoded = new TextEncoder().encode(text);
             const iv = window.crypto.getRandomValues(new Uint8Array(12));
@@ -158,6 +201,7 @@
                 encoded
             );
 
+            // Combine IV + Cipher
             const combined = new Uint8Array(iv.length + ciphertext.byteLength);
             combined.set(iv);
             combined.set(new Uint8Array(ciphertext), iv.length);
@@ -165,14 +209,17 @@
             document.getElementById('output').value = buffToB64(combined);
         }
 
-        // --- 4. DECRYPT (Unchanged) ---
+        // --- DECRYPTION LOGIC ---
         async function doDecrypt() {
-            if (!APP_KEY) return alert("Load a key first!");
+            if (!APP_KEY) return; // Double check
+            
+            const rawString = document.getElementById('input').value;
+            if(!rawString) return alert("Paste encrypted code first.");
+
             try {
-                const rawString = document.getElementById('input').value;
-                if(!rawString) return;
-                
                 const combined = b64ToBuff(rawString);
+                
+                // Extract IV & Data
                 const iv = combined.slice(0, 12);
                 const data = combined.slice(12);
 
@@ -184,20 +231,13 @@
 
                 document.getElementById('output').value = new TextDecoder().decode(decrypted);
             } catch (e) {
-                document.getElementById('output').value = "⚠️ DECRYPTION FAILED. Wrong Key or Corrupt Text.";
-            }
-        }
-
-        function updateStatus(active) {
-            const el = document.getElementById('keyStatus');
-            if (active) {
-                el.innerText = "SECURE LINK ESTABLISHED";
-                el.className = "active";
+                document.getElementById('output').value = "❌ DECRYPTION FAILED\n(Wrong Key or text was modified)";
             }
         }
 
         function copyOutput() {
             const copyText = document.getElementById("output");
+            if(!copyText.value) return;
             copyText.select();
             document.execCommand("copy");
         }
